@@ -42,8 +42,8 @@ MIT licensed. [Built by Executive51.biz](https://executive51.biz/).
 
 ## Development time
 
-Approximately 1 hour 40 minutes of elapsed agent development for this implementation session through 2026-11-20 13:24 UTC, including the sequential conformance, performance, and ethics reviews. The session start and agent CPU time were not instrumented, so this is an approximate wall-clock estimate, not a precise labor total. The focused ethics review is estimated at about 10 minutes.
+Approximately 1 hour 49 minutes of elapsed agent development for this implementation session through 2026-11-20 13:33 UTC, including the sequential conformance, performance, and ethics reviews. The session start and agent CPU time were not instrumented, so this is an approximate wall-clock estimate, not a precise labor total. The focused ethics review is estimated at about 10 minutes.
 
 ## Repository publication
 
-GitHub publication remains pending. The user reports `gh auth status` succeeds for wowo515151 in their shell, but the local GitHub CLI in this workspace reports an invalid stored credential and cannot resolve the GitHub API hostname. No account login or credential change was attempted.
+Repository: [wowo515151/Relativity](https://github.com/wowo515151/Relativity). Live site: [GitHub Pages](https://wowo515151.github.io/Relativity/). The repository is MIT licensed, and Management remains outside the source repository.
