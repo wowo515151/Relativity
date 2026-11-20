@@ -1,8 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { DEFAULT_C, Event, FourVector, LorentzTransform, Metric, RelativityError, Tensor, classifySeparation, createComputeBackend, intervalSquared, properTime, toRenderCoordinates, velocityAdd } from '../src/relativity.js';
+import { DEFAULT_C, Event, FourVector, LorentzTransform, Metric, RelativityError, Tensor, classifySeparation, createComputeBackend, intervalSquared, properTime, toRenderCoordinates, transformPhoton, velocityAdd } from '../src/relativity.js';
 
 const close = (actual, expected, tolerance = 1e-10) => assert.ok(Math.abs(actual - expected) <= tolerance * Math.max(1, Math.abs(expected)), `${actual} != ${expected}`);
+
+test('events and four-vectors expose consistent coordinate, arithmetic, and variance behavior', () => {
+  const event=new Event(1,2,3,4,'m'); const lower=event.toFourVector('down');
+  assert.equal(lower.variance,'down'); assert.equal(lower.unit,'m'); assert.deepEqual(lower.components,[-1,2,3,4]);
+  const a=new FourVector(1,2,3,4); const b=new FourVector(4,3,2,1);
+  assert.deepEqual(a.add(b).components,[5,5,5,5]); assert.deepEqual(a.subtract(b).components,[-3,-1,1,3]); assert.deepEqual(a.scale(2).components,[2,4,6,8]);
+  assert.throws(()=>a.add(new FourVector(1,1,1,1,{variance:'down'})),RelativityError);
+  assert.throws(()=>new Event(0,0,0,0,''),RelativityError);
+});
 
 test('Minkowski metric and covariant lowering use the (-+++) convention', () => {
   assert.deepEqual(Metric.minkowski(), [[-1,0,0,0],[0,1,0,0],[0,0,1,0],[0,0,0,1]]);
@@ -14,6 +23,8 @@ test('interval classifies timelike, null, and spacelike separations', () => {
   const o = new Event(0,0,0,0); const timelike = new Event(2,1,0,0); const lightlike = new Event(1,1,0,0); const spacelike = new Event(0,1,0,0);
   assert.equal(classifySeparation(timelike,o), 'timelike'); assert.equal(classifySeparation(lightlike,o), 'null'); assert.equal(classifySeparation(spacelike,o), 'spacelike');
   close(intervalSquared(timelike,o), -3); close(properTime(timelike,o,1), Math.sqrt(3)); assert.throws(() => properTime(spacelike,o,1), RelativityError);
+  close(properTime(new Event(1e12,0,0,0),new Event(1e12+2,0,0,0),1),2);
+  assert.throws(() => properTime(timelike,o,0),RelativityError); assert.throws(() => classifySeparation(timelike,o,-1),RelativityError);
 });
 
 test('Lorentz boost preserves interval, inverse, and metric orthogonality', () => {
@@ -66,8 +77,15 @@ test('Einstein velocity composition remains subluminal and handles zero boost', 
   assert.ok(Math.hypot(...velocityAdd([.7,0,0],[0,.6,0],1))<1);
 });
 
+test('photon transform derives Doppler shift and aberration through a Lorentz boost', () => {
+  const headOn=transformPhoton([1,0,0],[-.6,0,0],1,1); close(headOn.frequencyRatio,2); assert.deepEqual(headOn.direction,[1,0,0]);
+  const transverse=transformPhoton([0,1,0],[-.6,0,0],1,1); close(transverse.frequencyRatio,1.25); close(transverse.direction[0],.6); close(transverse.direction[1],.8);
+  assert.throws(()=>transformPhoton([0,0,0],[0,0,0]),RelativityError); assert.throws(()=>transformPhoton([1,0,0],[0,0,0],0),RelativityError);
+});
+
 test('render coordinates keep time separate from displayed space', () => {
   const view=toRenderCoordinates(new Event(DEFAULT_C,3,4,5),new Event(0,1,2,3),2); assert.deepEqual(view,{x:1,y:1,z:1,timeSeconds:1,unit:'render-units'});
+  assert.throws(() => toRenderCoordinates(new Event(1,0,0,0,'ft'),new Event(0,0,0,0,'m')),RelativityError);
 });
 
 test('invalid numerical inputs and inconsistent coordinate units are rejected', () => {
@@ -81,4 +99,41 @@ test('batch backend has deterministic CPU fallback without WebGPU', async () => 
   const batch=await backend.transformEventsBatch([new Event(2,1,0,0)],LorentzTransform.fromVelocity(.5,0,0,1));
   assert.equal(batch.backend,'cpu-f64'); assert.equal(batch.precision,'float64'); assert.equal(batch.fallback,null);
   close(batch.events[0].ct,1.7320508075688772); close(batch.events[0].x,0); await backend.dispose();
+});
+
+test('tensor batch transforms use the CPU reference and preserve metadata', async () => {
+  const backend=await createComputeBackend({forceCpu:true});
+  const tensor=new Tensor([4,4],[1,0,0,0,0,2,0,0,0,0,3,0,0,0,0,4],['up','down']);
+  const result=await backend.transformTensorsBatch([tensor],LorentzTransform.fromVelocity(.3,0,0,1));
+  assert.equal(result.backend,'cpu-f64'); assert.equal(result.precision,'float64'); assert.equal(result.tensors.length,1);
+  close(result.tensors[0].contract(0,1).at(),10,1e-9);
+  await backend.dispose();
+});
+
+test('GPU tensor batch falls back before allocating when device limits are too small', async () => {
+  const fakeDevice={limits:{maxBufferSize:8,maxStorageBufferBindingSize:8,maxComputeWorkgroupsPerDimension:1},destroy(){}};
+  const backend=await createComputeBackend({device:fakeDevice});
+  const tensor=new Tensor([4,4],Array(16).fill(0),['up','down']);
+  const result=await backend.transformTensorsBatch([tensor],LorentzTransform.fromVelocity(.2,0,0,1));
+  assert.equal(result.backend,'cpu-f64'); assert.equal(result.fallback,'device-buffer-limit'); assert.equal(result.tensors.length,1);
+});
+
+test('tensor addition, scaling, and index permutation preserve storage semantics', () => {
+  const t=new Tensor([4,4],Array.from({length:16},(_,i)=>i),['up','down']);
+  const sum=t.add(t); assert.equal(sum.at(1,2),t.at(1,2)*2); assert.equal(t.scale(3).at(2,1),t.at(2,1)*3);
+  const swapped=t.permute([1,0]); assert.equal(swapped.at(1,2),t.at(2,1)); assert.deepEqual(swapped.variance,['down','up']);
+});
+
+test('boost composition applies matrices in documented order', () => {
+  const first=LorentzTransform.fromVelocity(.2,0,0,1); const second=LorentzTransform.fromVelocity(0,.3,0,1); const event=new Event(2,1,-1,.5);
+  const composed=first.compose(second).apply(event); const sequential=second.apply(first.apply(event));
+  composed.coordinates.forEach((value,i)=>close(value,sequential.coordinates[i]));
+});
+
+test('GPU event batch respects device limits before allocation', async () => {
+  const fakeDevice={limits:{maxBufferSize:8,maxStorageBufferBindingSize:8,maxComputeWorkgroupsPerDimension:1},destroy(){}};
+  const backend=await createComputeBackend({device:fakeDevice}); const event=new Event(1,2,3,4); const transform=LorentzTransform.fromVelocity(.2,0,0,1);
+  const result=await backend.transformEventsBatch([event],transform);
+  assert.equal(result.backend,'cpu-f64'); assert.equal(result.fallback,'device-buffer-limit');
+  close(result.events[0].ct,transform.apply(event).ct);
 });

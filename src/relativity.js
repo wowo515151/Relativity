@@ -23,6 +23,7 @@ function multiply(a, b) {
 
 export class Event {
   constructor(ct, x, y, z, unit = 'm') {
+    if (typeof unit !== 'string' || !unit.trim()) throw new RelativityError('unit must be a nonempty string');
     this.coordinates = Object.freeze([finite(Number(ct), 'ct'), finite(Number(x), 'x'), finite(Number(y), 'y'), finite(Number(z), 'z')]);
     this.unit = unit;
     Object.freeze(this);
@@ -31,12 +32,17 @@ export class Event {
   get x() { return this.coordinates[1]; }
   get y() { return this.coordinates[2]; }
   get z() { return this.coordinates[3]; }
-  toFourVector(variance = 'up') { return new FourVector(...this.coordinates, { unit: this.unit, variance }); }
+  toFourVector(variance = 'up') {
+    if (!['up', 'down'].includes(variance)) throw new RelativityError('variance must be up or down');
+    const components = variance === 'up' ? this.coordinates : this.coordinates.map((x, i) => ETA[i] * x);
+    return new FourVector(...components, { unit: this.unit, variance });
+  }
 }
 
 export class FourVector {
   constructor(t, x, y, z, options = {}) {
     const { unit = 'm', variance = 'up' } = options;
+    if (typeof unit !== 'string' || !unit.trim()) throw new RelativityError('unit must be a nonempty string');
     if (!['up', 'down'].includes(variance)) throw new RelativityError('variance must be up or down');
     this.components = Object.freeze([finite(Number(t), 'component 0'), finite(Number(x), 'component 1'), finite(Number(y), 'component 2'), finite(Number(z), 'component 3')]);
     this.unit = unit; this.variance = variance;
@@ -176,21 +182,25 @@ export class LorentzTransform {
   }
 }
 
-export function intervalSquared(a, b, c = DEFAULT_C) {
+export function intervalSquared(a, b) {
   if (a?.unit !== b?.unit) throw new RelativityError('events must use matching coordinate units');
-  const x = coords(a); const y = coords(b); finite(c, 'c');
+  const x = coords(a); const y = coords(b);
   const d = x.map((v, i) => v - y[i]);
   return -(d[0] ** 2) + d[1] ** 2 + d[2] ** 2 + d[3] ** 2;
 }
 function coords(value) { if (value instanceof Event || value instanceof FourVector) return value.coordinates ?? value.components; throw new RelativityError('expected Event or FourVector'); }
 export function classifySeparation(a, b, relativeTolerance = 1e-12) {
+  finite(relativeTolerance, 'relativeTolerance');
+  if (relativeTolerance < 0) throw new RelativityError('relativeTolerance must be nonnegative');
   const x = coords(a); const y = coords(b); const d = x.map((v, i) => v - y[i]); const s = intervalSquared(a, b); const scale = d.reduce((sum, v) => sum + v * v, 0);
   if (Math.abs(s) <= Math.max(Number.EPSILON * scale * 32, relativeTolerance * scale)) return 'null';
   return s < 0 ? 'timelike' : 'spacelike';
 }
 export function properTime(a, b, c = DEFAULT_C) {
-  const s = intervalSquared(a, b, c);
-  if (s >= -Number.EPSILON * Math.max(1, ...coords(a).map(Math.abs)) ** 2) throw new RelativityError('proper time is defined only for timelike separation');
+  finite(c, 'c'); if (c <= 0) throw new RelativityError('c must be positive');
+  const s = intervalSquared(a, b); const x = coords(a); const y = coords(b);
+  const scale = x.reduce((sum, value, i) => sum + (value - y[i]) ** 2, 0);
+  if (s >= -Number.EPSILON * scale * 32) throw new RelativityError('proper time is defined only for timelike separation');
   return Math.sqrt(-s) / c;
 }
 export function velocityAdd(uInput, vInput, c = DEFAULT_C) {
@@ -204,9 +214,20 @@ export function velocityAdd(uInput, vInput, c = DEFAULT_C) {
   if (dot(result, result) >= c * c * (1 + 64 * Number.EPSILON)) throw new RelativityError('velocity composition produced a non-subluminal result', 'NUMERIC_RANGE');
   return result;
 }
+export function transformPhoton(directionInput, frameVelocity, frequency = 1, c = DEFAULT_C) {
+  const direction = vec3(directionInput, 'photon direction'); const speed = Math.hypot(...direction);
+  if (speed === 0) throw new RelativityError('photon direction must be nonzero');
+  finite(frequency, 'frequency'); if (frequency <= 0) throw new RelativityError('frequency must be positive');
+  const unitDirection = direction.map((x) => x / speed); const velocity = vec3(frameVelocity, 'frame velocity');
+  const photon = new FourVector(frequency, ...unitDirection.map((x) => x * frequency), { unit: 'frequency', variance: 'up' });
+  const transformed = LorentzTransform.fromVelocity(...velocity, c).apply(photon);
+  const spatial = transformed.components.slice(1); const outputFrequency = transformed.at(0); const outputMagnitude = Math.hypot(...spatial);
+  return Object.freeze({ frequency: outputFrequency, frequencyRatio: outputFrequency / frequency, direction: Object.freeze(spatial.map((x) => x / outputMagnitude)), backend: 'cpu-f64' });
+}
 export function toRenderCoordinates(event, origin = new Event(0, 0, 0, 0), scale = 1, c = DEFAULT_C) {
   finite(scale, 'scale'); if (scale <= 0) throw new RelativityError('scale must be positive');
   finite(c, 'c'); if (c <= 0) throw new RelativityError('c must be positive');
+  if (event?.unit !== origin?.unit) throw new RelativityError('events must use matching coordinate units');
   const e = coords(event); const o = coords(origin);
   return Object.freeze({ x: (e[1] - o[1]) / scale, y: (e[2] - o[2]) / scale, z: (e[3] - o[3]) / scale, timeSeconds: (e[0] - o[0]) / c, unit: 'render-units' });
 }
@@ -214,13 +235,22 @@ export function toRenderCoordinates(event, origin = new Event(0, 0, 0, 0), scale
 function buildShader() {
   return `struct Matrix { columns: array<vec4<f32>, 4> }; @group(0) @binding(0) var<storage, read> inputEvents: array<vec4<f32>>; @group(0) @binding(1) var<storage, read_write> outputEvents: array<vec4<f32>>; @group(0) @binding(2) var<uniform> transform: Matrix; @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid: vec3<u32>) { let i = gid.x; if (i >= arrayLength(&inputEvents)) { return; } outputEvents[i] = transform.columns[0] * inputEvents[i].x + transform.columns[1] * inputEvents[i].y + transform.columns[2] * inputEvents[i].z + transform.columns[3] * inputEvents[i].w; }`;
 }
+function buildTensorShader() {
+  return `struct MatrixPair { first: array<vec4<f32>, 4>, second: array<vec4<f32>, 4> }; @group(0) @binding(0) var<storage, read> inputValues: array<f32>; @group(0) @binding(1) var<storage, read_write> outputValues: array<f32>; @group(0) @binding(2) var<uniform> transforms: MatrixPair; @compute @workgroup_size(64) fn main(@builtin(global_invocation_id) gid: vec3<u32>) { let i = gid.x; if (i >= arrayLength(&inputValues)) { return; } let component = i % 16u; let outA = component / 4u; let outB = component % 4u; let tensorBase = i - component; var value = 0.0; for (var a = 0u; a < 4u; a = a + 1u) { for (var b = 0u; b < 4u; b = b + 1u) { value = value + transforms.first[a][outA] * transforms.second[b][outB] * inputValues[tensorBase + a * 4u + b]; } } outputValues[i] = value; }`;
+}
+function varianceMatrix(transform, variance) {
+  return variance === 'up' ? transform.matrix : transpose(transform.inverseMatrix);
+}
+function matrixColumns(matrix, target, offset = 0) {
+  for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) target[offset + c * 4 + r] = matrix[r][c];
+}
 export async function createComputeBackend({ device = null, forceCpu = false } = {}) {
-  if (forceCpu) return Object.freeze({ name: 'cpu-f64', precision: 'float64', async transformEventsBatch(events, transform) { return { events: cpuBatch(events, transform), backend: 'cpu-f64', precision: 'float64', fallback: null }; }, async dispose() {} });
+  if (forceCpu) return Object.freeze({ name: 'cpu-f64', precision: 'float64', async transformEventsBatch(events, transform) { return { events: cpuBatch(events, transform), backend: 'cpu-f64', precision: 'float64', fallback: null }; }, async transformTensorsBatch(tensors, transform) { return { tensors: cpuTensorBatch(tensors, transform), backend: 'cpu-f64', precision: 'float64', fallback: null }; }, async dispose() {} });
   let gpuDevice = device;
   try {
     if (!gpuDevice && globalThis.navigator?.gpu) { const adapter = await navigator.gpu.requestAdapter(); if (adapter) gpuDevice = await adapter.requestDevice(); }
   } catch { gpuDevice = null; }
-  if (!gpuDevice) return Object.freeze({ name: 'cpu-f64', precision: 'float64', async transformEventsBatch(events, transform) { return { events: cpuBatch(events, transform), backend: 'cpu-f64', precision: 'float64', fallback: null }; }, async dispose() {} });
+  if (!gpuDevice) return Object.freeze({ name: 'cpu-f64', precision: 'float64', async transformEventsBatch(events, transform) { return { events: cpuBatch(events, transform), backend: 'cpu-f64', precision: 'float64', fallback: null }; }, async transformTensorsBatch(tensors, transform) { return { tensors: cpuTensorBatch(tensors, transform), backend: 'cpu-f64', precision: 'float64', fallback: null }; }, async dispose() {} });
   const backend = {
     name: 'webgpu', precision: 'float32-approximate',
     async transformEventsBatch(events, transform) {
@@ -257,6 +287,39 @@ export async function createComputeBackend({ device = null, forceCpu = false } =
         return { events: cpuBatch(events, transform), backend: 'cpu-f64', precision: 'float64', fallback: 'gpu-error' };
       } finally { for (const buffer of buffers) { try { buffer.destroy(); } catch {} } }
     },
+    async transformTensorsBatch(tensors, transform) {
+      let buffers = [];
+      try {
+        validateTensorBatch(tensors, transform);
+        if (tensors.length === 0) return { tensors: [], backend: 'webgpu', precision: 'float32-approximate', fallback: null };
+        if (tensors.length > 65_536) return { tensors: cpuTensorBatch(tensors, transform), backend: 'cpu-f64', precision: 'float64', fallback: 'batch-size-limit' };
+        const outputBytes = tensors.length * 16 * Float32Array.BYTES_PER_ELEMENT;
+        const maxBufferSize = gpuDevice.limits?.maxBufferSize ?? Number.POSITIVE_INFINITY;
+        const maxStorageSize = gpuDevice.limits?.maxStorageBufferBindingSize ?? maxBufferSize;
+        if (outputBytes > maxBufferSize || outputBytes > maxStorageSize) return { tensors: cpuTensorBatch(tensors, transform), backend: 'cpu-f64', precision: 'float64', fallback: 'device-buffer-limit' };
+        if (Math.ceil(tensors.length * 16 / 64) > (gpuDevice.limits?.maxComputeWorkgroupsPerDimension ?? 65_535)) return { tensors: cpuTensorBatch(tensors, transform), backend: 'cpu-f64', precision: 'float64', fallback: 'device-dispatch-limit' };
+        const components = new Float32Array(tensors.length * 16);
+        tensors.forEach((tensor, i) => components.set(tensor.components, i * 16));
+        const usage = GPUBufferUsage;
+        const inBuf = gpuDevice.createBuffer({ size: outputBytes, usage: usage.STORAGE | usage.COPY_DST }); buffers.push(inBuf);
+        const outBuf = gpuDevice.createBuffer({ size: outputBytes, usage: usage.STORAGE | usage.COPY_SRC }); buffers.push(outBuf);
+        const readBuf = gpuDevice.createBuffer({ size: outputBytes, usage: usage.MAP_READ | usage.COPY_DST }); buffers.push(readBuf);
+        const uniforms = new Float32Array(32);
+        matrixColumns(varianceMatrix(transform, tensors[0].variance[0]), uniforms, 0);
+        matrixColumns(varianceMatrix(transform, tensors[0].variance[1]), uniforms, 16);
+        const uniformBuf = gpuDevice.createBuffer({ size: uniforms.byteLength, usage: usage.UNIFORM | usage.COPY_DST }); buffers.push(uniformBuf);
+        gpuDevice.queue.writeBuffer(inBuf, 0, components); gpuDevice.queue.writeBuffer(uniformBuf, 0, uniforms);
+        const module = gpuDevice.createShaderModule({ code: buildTensorShader() });
+        const pipeline = gpuDevice.createComputePipeline({ layout: 'auto', compute: { module, entryPoint: 'main' } });
+        const group = gpuDevice.createBindGroup({ layout: pipeline.getBindGroupLayout(0), entries: [{ binding: 0, resource: { buffer: inBuf } }, { binding: 1, resource: { buffer: outBuf } }, { binding: 2, resource: { buffer: uniformBuf } }] });
+        const encoder = gpuDevice.createCommandEncoder(); const pass = encoder.beginComputePass(); pass.setPipeline(pipeline); pass.setBindGroup(0, group); pass.dispatchWorkgroups(Math.ceil(components.length / 64)); pass.end(); encoder.copyBufferToBuffer(outBuf, 0, readBuf, 0, outputBytes); gpuDevice.queue.submit([encoder.finish()]);
+        await readBuf.mapAsync(GPUMapMode.READ); const result = new Float32Array(readBuf.getMappedRange().slice(0)); readBuf.unmap();
+        const mapped = tensors.map((tensor, i) => new Tensor([4, 4], result.slice(i * 16, (i + 1) * 16), tensor.variance));
+        return { tensors: mapped, backend: 'webgpu', precision: 'float32-approximate', fallback: null };
+      } catch {
+        return { tensors: cpuTensorBatch(tensors, transform), backend: 'cpu-f64', precision: 'float64', fallback: 'gpu-error' };
+      } finally { for (const buffer of buffers) { try { buffer.destroy(); } catch {} } }
+    },
     async dispose() { if (!device && gpuDevice) gpuDevice.destroy(); },
   };
   return Object.freeze(backend);
@@ -264,4 +327,13 @@ export async function createComputeBackend({ device = null, forceCpu = false } =
 function cpuBatch(events, transform) {
   if (!Array.isArray(events) || events.some((e) => !(e instanceof Event)) || !(transform instanceof LorentzTransform)) throw new RelativityError('batch requires Events and a LorentzTransform');
   return events.map((e) => transform.apply(e));
+}
+function validateTensorBatch(tensors, transform) {
+  if (!Array.isArray(tensors) || tensors.some((tensor) => !(tensor instanceof Tensor) || tensor.rank !== 2 || tensor.shape[0] !== 4 || tensor.shape[1] !== 4)) throw new RelativityError('tensor batch requires rank-2 four-dimensional tensors');
+  if (!(transform instanceof LorentzTransform)) throw new RelativityError('tensor batch requires a LorentzTransform');
+  if (tensors.some((tensor) => tensor.variance.join() !== tensors[0]?.variance.join())) throw new RelativityError('tensor batch requires matching index variance');
+}
+function cpuTensorBatch(tensors, transform) {
+  validateTensorBatch(tensors, transform);
+  return tensors.map((tensor) => tensor.transform(transform));
 }
