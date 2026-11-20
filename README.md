@@ -28,7 +28,7 @@ console.log(boost.apply(event));
 
 ## Visualizations
 
-Serve `index.html` from a static HTTP host to explore the ten synthetic visualizations. All controls work without WebGPU. GPU use is opt-in through the batch demo button; GPU results use Float32 and are approximate. The library does not claim GPU speedups. Direct `file:` loading may be blocked by browser module security.
+Serve `index.html` from a static HTTP host to explore the ten synthetic visualizations. Each pane explains its physics, axes, markers, and controls; canvas labels reference that explanation and the current numerical readout. All controls work without WebGPU. GPU use is opt-in through the batch demo button; GPU results use Float32 and are approximate. The library does not claim GPU speedups. Direct `file:` loading may be blocked by browser module security.
 
 ## Tests
 
@@ -42,7 +42,7 @@ MIT licensed. [Built by Executive51.biz](https://executive51.biz/).
 
 ## Development time
 
-Approximately 2 hours 6 minutes of elapsed agent development for this implementation session through 2026-11-20 13:50 UTC, including the sequential conformance, performance, and ethics reviews. The session start and agent CPU time were not instrumented, so this is an approximate wall-clock estimate, not a precise labor total. The focused ethics review is estimated at about 12 minutes.
+Approximately 2 hours 25 minutes of elapsed agent development for this implementation session through 2026-11-20 14:09 UTC, including the sequential conformance, performance, and ethics reviews. The session start and agent CPU time were not instrumented, so this is an approximate wall-clock estimate, not a precise labor total. Focused ethics review is estimated at about 15 minutes.
 
 ## Repository publication
 
