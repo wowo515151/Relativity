@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 class FakeCanvasContext {
-  clearRect() {} fillRect() {} beginPath() {} moveTo() {} lineTo() {} stroke() {} fillText() {} arc() {} fill() {}
+  constructor(){this.lines=[];this.arcs=[];this.rects=[];this.lastPoint=null;}
+  clearRect() {} fillRect(...args) { this.rects.push(args); } beginPath() {} moveTo(x,y) { this.lastPoint=[x,y]; } lineTo(x,y) { if(this.lastPoint)this.lines.push([this.lastPoint[0],this.lastPoint[1],x,y]); this.lastPoint=[x,y]; } stroke() {} fillText() {} arc(...args) { this.arcs.push(args); } fill() {}
 }
 class FakeElement {
   constructor(tag) { this.tagName=tag; this.children=[]; this.attributes={}; this.listeners={}; this.textContent=''; this.value=''; this.context=new FakeCanvasContext(); }
@@ -25,6 +26,10 @@ test('visitor app builds ten panels and each slider refreshes its text output', 
       assert.match(title.textContent,/^\d+\./); assert.equal(canvas.attributes.role,'img'); assert.ok(canvas.attributes['aria-label']);
       const slider=controls.children[1]; const initial=readout.textContent; const defaultValue=slider.value; assert.ok(initial.length>0);
       slider.value=slider.max; slider.listeners.input(); assert.ok(readout.textContent.length>0);
+      if(title.textContent.startsWith('1.')){const marker=canvas.context.arcs.at(-1);assert.ok(Math.abs(marker[0]-468.5)<1);assert.ok(Math.abs(marker[1]-38)<1);assert.match(readout.textContent,/timelike; interval squared = -0\.878/);}
+      if(title.textContent.startsWith('4.')){const outbound=canvas.context.lines.at(-2);const returnLeg=canvas.context.lines.at(-1);assert.ok(Math.abs(outbound[0]-360)<1);assert.ok(Math.abs(outbound[1]-322)<1);assert.ok(Math.abs(outbound[2]-654.5)<1);assert.ok(Math.abs(outbound[3]-180)<1);assert.ok(Math.abs(returnLeg[0]-654.5)<1);assert.ok(Math.abs(returnLeg[1]-180)<1);assert.ok(Math.abs(returnLeg[2]-360)<1);assert.ok(Math.abs(returnLeg[3]-38)<1);assert.match(readout.textContent,/coordinate time=2\.000 units/);}
+      if(title.textContent.startsWith('5.')){const measuredRod=canvas.context.lines.at(-1);assert.ok(Math.abs((measuredRod[0]+measuredRod[2])/2-360)<1);assert.ok(Math.abs((measuredRod[2]-measuredRod[0])-125.9)<1);assert.match(readout.textContent,/equal-boosted-time endpoint separation=0\.406 units/);}
+      if(title.textContent.startsWith('6.')){const einstein=canvas.context.arcs.at(-1);const classical=canvas.context.rects.at(-1);assert.ok(Math.abs(einstein[0]-654.5)<1);assert.ok(Math.abs(einstein[1]-92.6)<1);assert.ok(Math.abs(classical[0]+5-654.5)<1);assert.ok(Math.abs(classical[1]+5-46.9)<1);assert.match(readout.textContent,/Einstein composition=0\.985c \(circle\); classical sum=1\.500c \(square\)/);}
       const extra=card.children.length===6?card.children[4]:null; const extraDefault=extra?.children[1].value;
       if(extra){const before=readout.textContent;extra.children[1].value=extra.children[1].max;extra.children[1].listeners.input();assert.notEqual(readout.textContent,before);if(title.textContent.startsWith('9.'))assert.match(readout.textContent,/m=5\.0 kg.*invariant mass=5\.000 kg/);}
       controls.children[3].listeners.click(); assert.equal(slider.value,defaultValue); if(extra) assert.equal(extra.children[1].value,extraDefault);
