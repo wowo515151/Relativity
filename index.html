@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Ten interactive visualizations for special relativity, powered by a small JavaScript library.">
+  <title>Relativity Lab</title>
+  <link rel="stylesheet" href="styles.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <header class="hero">
+    <p class="eyebrow">RELATIVITY LAB · SPECIAL RELATIVITY</p>
+    <h1>Explore spacetime</h1>
+    <p>Change a parameter and see how coordinates, intervals, and measured quantities relate between inertial frames. All values are synthetic illustrations.</p>
+    <p id="backend-status" role="status">CPU Float64 calculations are active. GPU initialization is optional.</p>
+    <button id="gpu-demo" class="gpu-demo" type="button">Try optional GPU batch demo</button>
+  </header>
+  <main>
+    <section class="intro" aria-labelledby="intro-title">
+      <h2 id="intro-title">How to use the lab</h2>
+      <p>Each panel uses the same convention: <var>c</var> = 1 light-year per year for display, with spacetime intervals in normalized units. The library API uses SI units unless the caller supplies a consistent unit. Display coordinates never feed back into calculations.</p>
+      <p>GPU batching is optional. If WebGPU is unavailable, the CPU calculation path remains active.</p>
+    </section>
+    <section id="visualizations" class="grid" aria-label="Ten interactive relativity visualizations"></section>
+  </main>
+  <footer>
+    <p>Relativity Lab is an educational model, not experimental data. Numerical values are generated locally.</p>
+    <p>Source repository: not yet published. <a href="LICENSE">MIT license</a> · <a href="https://executive51.biz/" rel="noopener">Built by Executive51.biz</a></p>
+  </footer>
+</body>
+</html>
